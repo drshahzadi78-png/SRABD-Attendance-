@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attendance</title>
+<style>
+  :root{--bg:#eef2f6;--card:#fff;--ink:#14202b;--muted:#5b6b7a;--line:#d5dde5;--accent:#0f5fd7;--ok:#13795b}
+  @media (prefers-color-scheme:dark){:root{--bg:#0f1720;--card:#17222e;--ink:#e8eef4;--muted:#94a3b3;--line:#2a3846;--accent:#5b9bff;--ok:#4cc9a0}}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:20px;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{width:100%;max-width:420px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px}
+  h1{margin:0 0 4px;font-size:1.25rem}
+  p{margin:0 0 18px;color:var(--muted)}
+  .clock{font-size:2.6rem;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin:0}
+  .date{color:var(--muted);margin:0 0 22px}
+  label{display:block;font-weight:600;margin-bottom:6px}
+  input{width:100%;padding:12px;font:inherit;color:inherit;background:transparent;border:1px solid var(--line);border-radius:8px}
+  button{width:100%;margin-top:12px;padding:14px;font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0;border-radius:8px;cursor:pointer}
+  button:disabled{opacity:.6;cursor:wait}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line);margin-top:8px;padding:8px}
+  :focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  .result{margin-top:16px;padding:14px;border-radius:8px;border:1px solid var(--ok);color:var(--ok);font-weight:600}
+  .error{margin-top:12px;color:#c0392b}
+  ul{list-style:none;padding:0;margin:8px 0 0;color:var(--muted);font-variant-numeric:tabular-nums}
+  li{padding:6px 0;border-top:1px solid var(--line)}
+  h2{font-size:1rem;margin:22px 0 0}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <p class="clock" id="clock" aria-live="off">--:--:--</p>
+  <p class="date" id="date"></p>
+
+  <section id="login">
+    <h1>Sign in</h1>
+    <p>Enter your full name and PIN. If this is your first time, the PIN you enter becomes your PIN.</p>
+    <label for="name">Full name</label>
+    <input id="name" autocomplete="name" maxlength="60">
+    <label for="pin" style="margin-top:12px">PIN (4 to 8 digits)</label>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="8">
+    <button id="loginBtn">Sign in</button>
+    <div class="error" id="loginErr" role="alert"></div>
+  </section>
+
+  <section id="app" hidden>
+    <h1>Hello, <span id="who"></span></h1>
+    <p>Select the button to record your attendance now.</p>
+    <button id="checkin">Record attendance</button>
+    <div class="result" id="result" role="status" hidden></div>
+    <div class="error" id="err" role="alert"></div>
+    <h2>Your recent check-ins</h2>
+    <ul id="history"></ul>
+    <button class="ghost" id="logout">Sign out</button>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (iso) => new Date(iso).toLocaleString([], {dateStyle:"full", timeStyle:"medium"});
+let user = "", userPin = "";
+
+setInterval(tick, 1000); tick();
+function tick(){
+  const n = new Date();
+  $("clock").textContent = n.toLocaleTimeString([], {hour12:false});
+  $("date").textContent = n.toLocaleDateString([], {dateStyle:"full"});
+}
+
+function renderHistory(records){
+  $("history").innerHTML = "";
+  if (!records || !records.length) { $("history").innerHTML = "<li>No check-ins yet.</li>"; return; }
+  records.forEach((t) => { const li = document.createElement("li"); li.textContent = fmt(t); $("history").appendChild(li); });
+}
+
+async function call(action, name, pin){
+  const r = await fetch("/api/attendance", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({action, name, pin})
+  });
+  let d = {};
+  try { d = await r.json(); } catch {}
+  if (!r.ok) throw new Error(d.error || "Request failed.");
+  return d;
+}
+
+function show(signedIn){
+  $("login").hidden = signedIn; $("app").hidden = !signedIn;
+  $("who").textContent = user;
+}
+
+$("loginBtn").onclick = async () => {
+  const name = $("name").value.trim().replace(/\s+/g, " ");
+  const pin = $("pin").value.trim();
+  $("loginErr").textContent = "";
+  if (!name) { $("loginErr").textContent = "Enter your name to continue."; return; }
+  if (!/^\d{4,8}$/.test(pin)) { $("loginErr").textContent = "PIN must be 4 to 8 digits."; return; }
+  const btn = $("loginBtn"); btn.disabled = true;
+  try {
+    const d = await call("login", name, pin);
+    user = d.name; userPin = pin;
+    $("pin").value = "";
+    renderHistory(d.records);
+    show(true);
+    if (d.created) { $("result").hidden = false; $("result").textContent = "PIN saved. Use it next time you sign in."; }
+  } catch (e) { $("loginErr").textContent = e.message; }
+  finally { btn.disabled = false; }
+};
+["name","pin"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") $("loginBtn").click(); }));
+
+$("logout").onclick = () => {
+  user = ""; userPin = ""; $("result").hidden = true; $("err").textContent = ""; show(false);
+};
+
+$("checkin").onclick = async () => {
+  const btn = $("checkin"); btn.disabled = true; $("err").textContent = "";
+  try {
+    const d = await call("checkin", user, userPin);
+    $("result").hidden = false;
+    $("result").textContent = "Attendance recorded: " + fmt(d.checked_in_at);
+    renderHistory(d.records);
+  } catch (e) {
+    $("err").textContent = "Could not record attendance. " + e.message;
+  } finally { btn.disabled = false; }
+};
+</script>
+</body>
+</html>
