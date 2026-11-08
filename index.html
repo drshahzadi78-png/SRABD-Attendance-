@@ -101,6 +101,8 @@
   @keyframes rise2{from{transform:translateY(0)}to{transform:translateY(-118vh)}}
   @keyframes swayx{from{translate:-24px 0}to{translate:24px 0}}
   @keyframes tilt{from{rotate:-20deg}to{rotate:20deg}}
+  .late{color:#d62828;font-weight:600}
+  .late::after{content:" (late)";font-weight:400;font-size:.85em}
 </style>
 </head>
 <body>
@@ -141,9 +143,11 @@
     <div class="error" id="err" role="alert"></div>
     <h2 id="histTitle">All your check-ins</h2>
     <ul id="history"></ul>
+    <button class="ghost" id="dl">Download Excel</button>
     <button class="ghost" id="logout">Sign out</button>
   </section>
 </main>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js" defer></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const fmt = (iso) => new Date(iso).toLocaleString([], {dateStyle:"full", timeStyle:"medium"});
@@ -156,11 +160,14 @@ function tick(){
   $("date").textContent = n.toLocaleDateString([], {dateStyle:"full"});
 }
 
+let lastRecords = [];
+const isLate = (t) => { const d = new Date(t); return d.getHours()*3600 + d.getMinutes()*60 + d.getSeconds() > 9*3600; };
 function renderHistory(records){
+  lastRecords = records || [];
   $("history").innerHTML = "";
   $("histTitle").textContent = "All your check-ins" + (records && records.length ? " (" + records.length + ")" : "");
   if (!records || !records.length) { $("history").innerHTML = "<li>No check-ins yet.</li>"; return; }
-  records.forEach((t) => { const li = document.createElement("li"); li.textContent = fmt(t); $("history").appendChild(li); });
+  records.forEach((t) => { const li = document.createElement("li"); li.textContent = fmt(t); if (isLate(t)) li.className = "late"; $("history").appendChild(li); });
 }
 
 async function call(action, name, pin){
@@ -236,6 +243,47 @@ $("checkin").onclick = async () => {
     box.appendChild(v);
   }
 })();
+
+$("dl").onclick = async () => {
+  if (!lastRecords.length) { $("err").textContent = "No check-ins to download yet."; return; }
+  if (typeof ExcelJS === "undefined") { $("err").textContent = "The Excel tool did not load. Check your internet connection and try again."; return; }
+  $("err").textContent = "";
+  const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet("Attendance");
+  ws.columns = [
+    {header:"Name", key:"n", width:26}, {header:"Date", key:"d", width:16},
+    {header:"Day", key:"w", width:14}, {header:"Time", key:"t", width:14}, {header:"Status", key:"s", width:12}
+  ];
+  const head = ws.getRow(1);
+  head.eachCell((c) => {
+    c.font = {bold:true, color:{argb:"FFFFFFFF"}};
+    c.fill = {type:"pattern", pattern:"solid", fgColor:{argb:"FF1A5CA0"}};
+  });
+  let late = 0;
+  lastRecords.slice().reverse().forEach((t) => {
+    const d = new Date(t), isL = isLate(t);
+    if (isL) late++;
+    const row = ws.addRow({
+      n:user,
+      d:d.toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}),
+      w:d.toLocaleDateString("en-GB",{weekday:"long"}),
+      t:d.toLocaleTimeString("en-US"),
+      s:isL ? "Late" : "On time"
+    });
+    if (isL) row.eachCell((c) => {
+      c.fill = {type:"pattern", pattern:"solid", fgColor:{argb:"FFFFC7CE"}};
+      c.font = {bold:true, color:{argb:"FF9C0006"}};
+    });
+  });
+  ws.addRow([]);
+  ws.addRow(["Total check-ins", lastRecords.length]).font = {bold:true};
+  ws.addRow(["Late (after 9:00 AM)", late]).font = {bold:true, color:{argb:"FF9C0006"}};
+  const buf = await wb.xlsx.writeBuffer();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+  a.download = "attendance-" + user.replace(/[^\w]+/g, "-") + ".xlsx";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
 
 function burst(){
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
