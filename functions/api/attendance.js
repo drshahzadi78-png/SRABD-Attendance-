@@ -77,7 +77,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   const { results } = await env.DB.prepare(
-    "SELECT checked_in_at FROM attendance WHERE name = ? COLLATE NOCASE ORDER BY checked_in_at DESC LIMIT 10"
+    "SELECT checked_in_at FROM attendance WHERE name = ? COLLATE NOCASE ORDER BY checked_in_at DESC LIMIT 1000"
   ).bind(user.name).all();
 
   return json({ name: user.name, created, checked_in_at: checkedInAt, records: results.map((r) => r.checked_in_at) });
