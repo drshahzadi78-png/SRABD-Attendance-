@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Attendance admin</title>
+<style>
+  :root{color-scheme:light;--ink:#13202e;--muted:#46586a;--line:#d5dde5;--blue:#1a5ca0;--orange:#f58220;--red:#c0392b;--ok:#0e7a57}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;padding:20px;background:linear-gradient(160deg,#f6fafe,#d9eaf7);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{position:relative;max-width:640px;margin:0 auto;background:#fff;border:1px solid var(--line);border-radius:14px;padding:28px;box-shadow:0 20px 50px rgba(26,92,160,.15)}
+  main::before{content:"";position:absolute;left:0;right:0;top:0;height:5px;border-radius:14px 14px 0 0;background:linear-gradient(90deg,#1a5ca0,#2e93d1 55%,#f58220)}
+  h1{margin:6px 0 4px;color:var(--blue);font-size:1.4rem}
+  h2{margin:26px 0 6px;font-size:1.05rem}
+  p{margin:0 0 12px;color:var(--muted)}
+  input,textarea{width:100%;padding:12px;font:inherit;color:inherit;border:1px solid var(--line);border-radius:8px}
+  input:focus,textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(46,147,209,.3)}
+  button{padding:10px 14px;font:inherit;font-weight:600;border:0;border-radius:8px;cursor:pointer;color:#0d2b52;background:var(--orange)}
+  button.full{width:100%;margin-top:12px}
+  button.small{padding:6px 10px;font-size:.85rem;font-weight:600;background:#eef3f8;color:var(--blue);border:1px solid var(--line)}
+  button.danger{color:var(--red)}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line);margin-top:20px}
+  button:disabled{opacity:.6;cursor:wait}
+  .error{color:var(--red);margin-top:10px}.ok{color:var(--ok);margin-top:10px}
+  ul{list-style:none;padding:0;margin:8px 0 0}
+  li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 0;border-top:1px solid var(--line)}
+  .nm{flex:1 1 160px;font-weight:600;word-break:break-word}
+  .tag{font-size:.8rem;padding:2px 8px;border-radius:99px;background:#eef3f8;color:var(--muted)}
+  .tag.active{background:#dff3ea;color:var(--ok)}.tag.locked{background:#fde4e1;color:var(--red)}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1>Attendance admin</h1>
+
+  <section id="login">
+    <p>Enter the admin password to manage who can sign in.</p>
+    <input id="pw" type="password" autocomplete="current-password" aria-label="Admin password">
+    <button class="full" id="go">Open</button>
+    <div class="error" id="e1" role="alert"></div>
+  </section>
+
+  <section id="panel" hidden>
+    <h2>Add approved names</h2>
+    <p>One name per line, written the way each person will type it when signing in.</p>
+    <textarea id="names" rows="4"></textarea>
+    <button class="full" id="add">Add to approved list</button>
+    <div id="msg" role="status"></div>
+
+    <h2>Approved people (<span id="count">0</span>)</h2>
+    <ul id="list"></ul>
+    <button class="ghost" id="out">Close admin</button>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let pw = "";
+
+async function api(action, extra) {
+  const r = await fetch("/api/admin", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(Object.assign({password: pw, action}, extra || {}))
+  });
+  let d = {};
+  try { d = await r.json(); } catch {}
+  if (!r.ok) throw new Error(d.error || "Request failed.");
+  return d;
+}
+
+function button(label, cls, onClick) {
+  const b = document.createElement("button");
+  b.className = "small " + cls; b.textContent = label; b.onclick = onClick;
+  return b;
+}
+
+const LABEL = {waiting: "Not signed in yet", active: "Active", locked: "Locked"};
+
+function render(names) {
+  $("count").textContent = names.length;
+  const ul = $("list"); ul.innerHTML = "";
+  if (!names.length) { const li = document.createElement("li"); li.textContent = "No approved names yet."; ul.appendChild(li); return; }
+  names.forEach((n) => {
+    const li = document.createElement("li");
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = n.name;
+    const tag = document.createElement("span"); tag.className = "tag " + n.status; tag.textContent = LABEL[n.status];
+    li.append(nm, tag);
+    if (n.status === "locked") li.appendChild(button("Unlock", "", () => act("unlock", n.name)));
+    if (n.status !== "waiting") li.appendChild(button("Reset PIN", "", () => act("reset", n.name,
+      "Reset the PIN for " + n.name + "? They will choose a new PIN the next time they sign in.")));
+    li.appendChild(button("Remove", "danger", () => act("remove", n.name,
+      "Remove " + n.name + " from the approved list? They will no longer be able to sign in.")));
+    ul.appendChild(li);
+  });
+}
+
+async function act(action, name, confirmText) {
+  if (confirmText && !confirm(confirmText)) return;
+  $("msg").textContent = "";
+  try {
+    const d = await api(action, {name});
+    render(d.names);
+    $("msg").className = "ok";
+    $("msg").textContent = action === "reset" ? "PIN reset for " + name + "." : action === "unlock" ? name + " is unlocked." : action === "remove" ? name + " removed." : "";
+  } catch (e) { $("msg").className = "error"; $("msg").textContent = e.message; }
+}
+
+$("go").onclick = async () => {
+  pw = $("pw").value; $("e1").textContent = "";
+  if (!pw) { $("e1").textContent = "Enter the password."; return; }
+  const b = $("go"); b.disabled = true;
+  try {
+    const d = await api("list");
+    $("pw").value = ""; $("login").hidden = true; $("panel").hidden = false; render(d.names);
+  } catch (e) { pw = ""; $("e1").textContent = e.message; }
+  finally { b.disabled = false; }
+};
+$("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("go").click(); });
+
+$("add").onclick = async () => {
+  const names = $("names").value.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (!names.length) { $("msg").className = "error"; $("msg").textContent = "Enter at least one name."; return; }
+  const b = $("add"); b.disabled = true;
+  try {
+    const d = await api("add", {names});
+    render(d.names); $("names").value = "";
+    $("msg").className = "ok"; $("msg").textContent = "Names added.";
+  } catch (e) { $("msg").className = "error"; $("msg").textContent = e.message; }
+  finally { b.disabled = false; }
+};
+
+$("out").onclick = () => { pw = ""; $("panel").hidden = true; $("login").hidden = false; $("msg").textContent = ""; };
+</script>
+</body>
+</html>
