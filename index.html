@@ -103,6 +103,8 @@
   @keyframes tilt{from{rotate:-20deg}to{rotate:20deg}}
   .late{color:#d62828;font-weight:600}
   .late::after{content:" (late)";font-weight:400;font-size:.85em}
+  body{padding-bottom:64px}
+  .copyright{position:fixed;right:12px;bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:2;max-width:calc(100% - 24px);padding:6px 12px;border-radius:99px;background:rgba(13,43,82,.72);color:#fff;font-size:.78rem;text-align:right;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 </style>
 </head>
 <body>
@@ -147,6 +149,7 @@
     <button class="ghost" id="logout">Sign out</button>
   </section>
 </main>
+<footer class="copyright">© Rijon, Marketing Executive, SRABD</footer>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js" defer></script>
 <script>
 const $ = (id) => document.getElementById(id);
