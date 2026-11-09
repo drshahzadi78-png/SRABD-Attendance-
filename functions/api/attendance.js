@@ -7,6 +7,35 @@ const json = (data, status = 200) =>
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
 
+// ---- Late check-in alert (after 9:00 AM Bangladesh time) ----
+const CUTOFF_SECONDS = 9 * 3600; // 9:00:00 AM
+const TZ_OFFSET_HOURS = 6;       // Bangladesh is UTC+6 with no daylight saving
+const ALERT_TO = "hasib0642@gmail.com";
+
+function secondsIntoDay(now) {
+  const local = new Date(now.getTime() + TZ_OFFSET_HOURS * 3600 * 1000);
+  return local.getUTCHours() * 3600 + local.getUTCMinutes() * 60 + local.getUTCSeconds();
+}
+
+async function sendLateEmail(env, name, now) {
+  if (!env.RESEND_API_KEY) return; // alerts stay off until the key is added in Cloudflare
+  try {
+    const when = now.toLocaleString("en-GB", { timeZone: "Asia/Dhaka", dateStyle: "full", timeStyle: "medium" });
+    const minsLate = Math.floor((secondsIntoDay(now) - CUTOFF_SECONDS) / 60);
+    const time = now.toLocaleTimeString("en-US", { timeZone: "Asia/Dhaka" });
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + env.RESEND_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: "Attendance <onboarding@resend.dev>",
+        to: [env.ALERT_EMAIL || ALERT_TO],
+        subject: "Late check-in: " + name + " at " + time,
+        text: name + " checked in late.\n\nTime: " + when + " (Bangladesh time)\nLate by: about " + minsLate + " minutes after 9:00 AM",
+      }),
+    });
+  } catch (e) { /* never block a check-in because of an email problem */ }
+}
+
 const enc = new TextEncoder();
 const toHex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 const cleanName = (v) => String(v || "").trim().replace(/\s+/g, " ").slice(0, 60);
@@ -26,11 +55,11 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost({ request, env, waitUntil }) {
   let body;
   try { body = await request.json(); } catch { return json({ error: "Invalid request." }, 400); }
 
-  const action = body.action === "checkin" ? "checkin" : "login";
+  const action = body.action === "checkin" || body.action === "checkout" ? body.action : "login";
   const name = cleanName(body.name);
   const pin = String(body.pin || "");
   if (!name) return json({ error: "Enter your name." }, 400);
@@ -38,6 +67,15 @@ export async function onRequestPost({ request, env }) {
 
   const key = name.toLowerCase();
   const now = new Date();
+
+  // Check-outs live in their own table (created automatically the first time)
+  await env.DB.prepare(
+    "CREATE TABLE IF NOT EXISTS checkouts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, checked_out_at TEXT NOT NULL)"
+  ).run();
+
+  // Only names on the approved list may sign in or register
+  const approved = await env.DB.prepare("SELECT 1 FROM allowed WHERE name_key = ?").bind(key).first();
+  if (!approved) return json({ error: "This name is not on the approved list. Ask the administrator to add you." }, 403);
   let user = await env.DB.prepare("SELECT * FROM users WHERE name_key = ?").bind(key).first();
   let created = false;
 
@@ -70,15 +108,31 @@ export async function onRequestPost({ request, env }) {
   }
 
   let checkedInAt = null;
+  let checkedOutAt = null;
   if (action === "checkin") {
     checkedInAt = now.toISOString(); // server time, so it can't be edited in the browser
     await env.DB.prepare("INSERT INTO attendance (name, checked_in_at) VALUES (?, ?)")
       .bind(user.name, checkedInAt).run();
+    if (secondsIntoDay(now) > CUTOFF_SECONDS) waitUntil(sendLateEmail(env, user.name, now));
+  }
+  if (action === "checkout") {
+    checkedOutAt = now.toISOString(); // server time, so it can't be edited in the browser
+    await env.DB.prepare("INSERT INTO checkouts (name, checked_out_at) VALUES (?, ?)")
+      .bind(user.name, checkedOutAt).run();
   }
 
   const { results } = await env.DB.prepare(
     "SELECT checked_in_at FROM attendance WHERE name = ? COLLATE NOCASE ORDER BY checked_in_at DESC LIMIT 1000"
   ).bind(user.name).all();
 
-  return json({ name: user.name, created, checked_in_at: checkedInAt, records: results.map((r) => r.checked_in_at) });
+  const outs = await env.DB.prepare(
+    "SELECT checked_out_at FROM checkouts WHERE name = ? COLLATE NOCASE ORDER BY checked_out_at DESC LIMIT 1000"
+  ).bind(user.name).all();
+
+  return json({
+    name: user.name, created,
+    checked_in_at: checkedInAt, checked_out_at: checkedOutAt,
+    records: results.map((r) => r.checked_in_at),
+    checkouts: outs.results.map((r) => r.checked_out_at),
+  });
 }
