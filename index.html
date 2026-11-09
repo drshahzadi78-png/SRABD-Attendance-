@@ -105,6 +105,11 @@
   .late::after{content:" (late)";font-weight:400;font-size:.85em}
   body{padding-bottom:64px}
   .copyright{position:fixed;right:12px;bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:2;max-width:calc(100% - 24px);padding:6px 12px;border-radius:99px;background:rgba(13,43,82,.72);color:#fff;font-size:.78rem;text-align:right;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+  .block{margin-top:6px}
+  .block h2{margin-top:14px}
+  button.blue:not(.ghost){background:var(--accent);color:#fff}
+  button.blue:not(.ghost):hover{box-shadow:0 8px 20px rgba(26,92,160,.4)}
+  .ot{color:#0e7a57;font-weight:600}
 </style>
 </head>
 <body>
@@ -139,12 +144,23 @@
   <section id="app" hidden>
     <h1>Hello, <span id="who"></span></h1>
     <p class="quote">“I know you will work hard today.”</p>
-    <p>Select the button to record your attendance now.</p>
-    <button id="checkin">Record attendance</button>
-    <div class="result" id="result" role="status" hidden></div>
+    <div class="block">
+      <h2>Check in</h2>
+      <p>Select the button to record your attendance now.</p>
+      <button id="checkin">Record attendance</button>
+      <div class="result" id="result" role="status" hidden></div>
+    </div>
+    <div class="block">
+      <h2>Check out</h2>
+      <p>Press this when you finish for the day. Work after 5:45 PM counts as overtime.</p>
+      <button class="blue" id="checkout">Record check-out</button>
+      <div class="result" id="result2" role="status" hidden></div>
+    </div>
     <div class="error" id="err" role="alert"></div>
     <h2 id="histTitle">All your check-ins</h2>
     <ul id="history"></ul>
+    <h2 id="outTitle">All your check-outs</h2>
+    <ul id="outHistory"></ul>
     <button class="ghost" id="dl">Download Excel</button>
     <button class="ghost" id="logout">Sign out</button>
   </section>
@@ -163,8 +179,28 @@ function tick(){
   $("date").textContent = n.toLocaleDateString([], {dateStyle:"full"});
 }
 
-let lastRecords = [];
-const isLate = (t) => { const d = new Date(t); return d.getHours()*3600 + d.getMinutes()*60 + d.getSeconds() > 9*3600; };
+let lastRecords = [], lastOuts = [];
+// Work-day rules use Bangladesh time (UTC+6), the same clock the server uses for late alerts
+const dhaka = (t) => new Date(new Date(t).getTime() + 6*3600*1000);
+const secDhaka = (t) => { const d = dhaka(t); return d.getUTCHours()*3600 + d.getUTCMinutes()*60 + d.getUTCSeconds(); };
+const dayDhaka = (t) => dhaka(t).toISOString().slice(0, 10);
+const isLate = (t) => secDhaka(t) > 9*3600;                       // after 9:00 AM
+const otSeconds = (t) => Math.max(0, secDhaka(t) - 63900);        // after 5:45 PM
+const hm = (sec) => { const m = Math.floor(sec/60); return Math.floor(m/60) + "h " + (m%60) + "m"; };
+function renderOuts(outs){
+  lastOuts = outs || [];
+  $("outTitle").textContent = "All your check-outs" + (lastOuts.length ? " (" + lastOuts.length + ")" : "");
+  const ul = $("outHistory"); ul.innerHTML = "";
+  if (!lastOuts.length) { ul.innerHTML = "<li>No check-outs yet.</li>"; return; }
+  lastOuts.forEach((t) => {
+    const li = document.createElement("li"), ot = otSeconds(t);
+    li.textContent = fmt(t) + (ot ? " (overtime " + hm(ot) + ")" : "");
+    if (ot) li.className = "ot";
+    ul.appendChild(li);
+  });
+}
+function renderAll(d){ renderHistory(d.records); renderOuts(d.checkouts); }
+
 function renderHistory(records){
   lastRecords = records || [];
   $("history").innerHTML = "";
@@ -200,7 +236,7 @@ $("loginBtn").onclick = async () => {
     const d = await call("login", name, pin);
     user = d.name; userPin = pin;
     $("pin").value = "";
-    renderHistory(d.records);
+    renderAll(d);
     show(true);
     if (d.created) { $("result").hidden = false; $("result").textContent = "PIN saved. Use it next time you sign in."; }
   } catch (e) { $("loginErr").textContent = e.message; }
@@ -209,7 +245,7 @@ $("loginBtn").onclick = async () => {
 ["name","pin"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") $("loginBtn").click(); }));
 
 $("logout").onclick = () => {
-  user = ""; userPin = ""; $("result").hidden = true; $("err").textContent = ""; show(false);
+  user = ""; userPin = ""; $("result").hidden = true; $("result2").hidden = true; $("err").textContent = ""; show(false);
 };
 
 $("checkin").onclick = async () => {
@@ -219,7 +255,7 @@ $("checkin").onclick = async () => {
     $("result").hidden = false;
     $("result").textContent = "Attendance recorded: " + fmt(d.checked_in_at);
     burst();
-    renderHistory(d.records);
+    renderAll(d);
   } catch (e) {
     $("err").textContent = "Could not record attendance. " + e.message;
   } finally { btn.disabled = false; }
@@ -247,39 +283,65 @@ $("checkin").onclick = async () => {
   }
 })();
 
+$("checkout").onclick = async () => {
+  const btn = $("checkout"); btn.disabled = true; $("err").textContent = "";
+  try {
+    const d = await call("checkout", user, userPin);
+    const ot = otSeconds(d.checked_out_at);
+    $("result2").hidden = false;
+    $("result2").textContent = "Check-out recorded: " + fmt(d.checked_out_at) + (ot ? ". Overtime: " + hm(ot) : "");
+    renderAll(d);
+  } catch (e) {
+    $("err").textContent = "Could not record check-out. " + e.message;
+  } finally { btn.disabled = false; }
+};
+
 $("dl").onclick = async () => {
-  if (!lastRecords.length) { $("err").textContent = "No check-ins to download yet."; return; }
+  if (!lastRecords.length && !lastOuts.length) { $("err").textContent = "No attendance to download yet."; return; }
   if (typeof ExcelJS === "undefined") { $("err").textContent = "The Excel tool did not load. Check your internet connection and try again."; return; }
   $("err").textContent = "";
+  // One row per day: first check-in and last check-out of that day
+  const days = {};
+  lastRecords.forEach((t) => { const x = days[dayDhaka(t)] || (days[dayDhaka(t)] = {}); if (!x.i || t < x.i) x.i = t; });
+  lastOuts.forEach((t) => { const x = days[dayDhaka(t)] || (days[dayDhaka(t)] = {}); if (!x.o || t > x.o) x.o = t; });
+
   const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet("Attendance");
   ws.columns = [
-    {header:"Name", key:"n", width:26}, {header:"Date", key:"d", width:16},
-    {header:"Day", key:"w", width:14}, {header:"Time", key:"t", width:14}, {header:"Status", key:"s", width:12}
+    {header:"Name", width:26}, {header:"Date", width:16}, {header:"Day", width:14},
+    {header:"Check-in", width:14}, {header:"Check-out", width:14}, {header:"Hours worked", width:14},
+    {header:"Status", width:14}, {header:"Overtime (after 5:45 PM)", width:24}
   ];
-  const head = ws.getRow(1);
-  head.eachCell((c) => {
+  ws.getRow(1).eachCell((c) => {
     c.font = {bold:true, color:{argb:"FFFFFFFF"}};
     c.fill = {type:"pattern", pattern:"solid", fgColor:{argb:"FF1A5CA0"}};
   });
-  let late = 0;
-  lastRecords.slice().reverse().forEach((t) => {
-    const d = new Date(t), isL = isLate(t);
-    if (isL) late++;
-    const row = ws.addRow({
-      n:user,
-      d:d.toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}),
-      w:d.toLocaleDateString("en-GB",{weekday:"long"}),
-      t:d.toLocaleTimeString("en-US"),
-      s:isL ? "Late" : "On time"
-    });
-    if (isL) row.eachCell((c) => {
-      c.fill = {type:"pattern", pattern:"solid", fgColor:{argb:"FFFFC7CE"}};
-      c.font = {bold:true, color:{argb:"FF9C0006"}};
-    });
+  const paint = (cell, fill, font) => {
+    cell.fill = {type:"pattern", pattern:"solid", fgColor:{argb:fill}};
+    cell.font = {bold:true, color:{argb:font}};
+  };
+  const tz = {timeZone:"Asia/Dhaka"};
+  let late = 0, otTotal = 0, n = 0;
+  Object.keys(days).sort().forEach((k) => {
+    const x = days[k], ref = new Date(x.i || x.o), ot = x.o ? otSeconds(x.o) : 0;
+    const isL = x.i ? isLate(x.i) : false;
+    n++; if (isL) late++; otTotal += ot;
+    const row = ws.addRow([
+      user,
+      ref.toLocaleDateString("en-GB", Object.assign({day:"numeric", month:"short", year:"numeric"}, tz)),
+      ref.toLocaleDateString("en-GB", Object.assign({weekday:"long"}, tz)),
+      x.i ? new Date(x.i).toLocaleTimeString("en-US", tz) : "-",
+      x.o ? new Date(x.o).toLocaleTimeString("en-US", tz) : "-",
+      x.i && x.o && x.o > x.i ? hm((new Date(x.o) - new Date(x.i)) / 1000) : "-",
+      !x.i ? "No check-in" : isL ? "Late" : "On time",
+      ot ? hm(ot) : "-"
+    ]);
+    if (isL) { paint(row.getCell(4), "FFFFC7CE", "FF9C0006"); paint(row.getCell(7), "FFFFC7CE", "FF9C0006"); }
+    if (ot) { paint(row.getCell(5), "FFC6EFCE", "FF006100"); paint(row.getCell(8), "FFC6EFCE", "FF006100"); }
   });
   ws.addRow([]);
-  ws.addRow(["Total check-ins", lastRecords.length]).font = {bold:true};
-  ws.addRow(["Late (after 9:00 AM)", late]).font = {bold:true, color:{argb:"FF9C0006"}};
+  ws.addRow(["Days recorded", n]).font = {bold:true};
+  ws.addRow(["Late arrivals (after 9:00 AM)", late]).font = {bold:true, color:{argb:"FF9C0006"}};
+  ws.addRow(["Total overtime (after 5:45 PM)", otTotal ? hm(otTotal) : "-"]).font = {bold:true, color:{argb:"FF006100"}};
   const buf = await wb.xlsx.writeBuffer();
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
