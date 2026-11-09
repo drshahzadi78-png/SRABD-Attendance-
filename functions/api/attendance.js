@@ -55,7 +55,7 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
-export async function onRequestPost({ request, env, waitUntil }) {
+async function handle({ request, env, waitUntil }) {
   let body;
   try { body = await request.json(); } catch { return json({ error: "Invalid request." }, 400); }
 
@@ -68,7 +68,16 @@ export async function onRequestPost({ request, env, waitUntil }) {
   const key = name.toLowerCase();
   const now = new Date();
 
-  // Check-outs live in their own table (created automatically the first time)
+  // Create missing tables by themselves, so a skipped setup step cannot break sign-in
+  const hasAllowed = await env.DB.prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'allowed'").first();
+  if (!hasAllowed) {
+    await env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS allowed (name_key TEXT PRIMARY KEY, name TEXT NOT NULL)"),
+      // everyone who already has an account stays approved
+      env.DB.prepare("INSERT OR IGNORE INTO allowed (name_key, name) SELECT name_key, name FROM users"),
+    ]);
+  }
+  // Check-outs live in their own table
   await env.DB.prepare(
     "CREATE TABLE IF NOT EXISTS checkouts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, checked_out_at TEXT NOT NULL)"
   ).run();
@@ -135,4 +144,13 @@ export async function onRequestPost({ request, env, waitUntil }) {
     records: results.map((r) => r.checked_in_at),
     checkouts: outs.results.map((r) => r.checked_out_at),
   });
+}
+
+export async function onRequestPost(ctx) {
+  try {
+    return await handle(ctx);
+  } catch (e) {
+    // Show a readable reason instead of a blank "Request failed."
+    return json({ error: "Server error: " + String((e && e.message) || e).slice(0, 160) }, 500);
+  }
 }
