@@ -10,7 +10,7 @@ const json = (data, status = 200) =>
 // ---- Late check-in alert (after 9:00 AM Bangladesh time) ----
 const CUTOFF_SECONDS = 9 * 3600; // 9:00:00 AM
 const TZ_OFFSET_HOURS = 6;       // Bangladesh is UTC+6 with no daylight saving
-const ALERT_TO = "hasib0642@gmail.com";
+const ALERT_TO = "drshahzadi78@gmail.com";
 
 function secondsIntoDay(now) {
   const local = new Date(now.getTime() + TZ_OFFSET_HOURS * 3600 * 1000);
@@ -23,7 +23,7 @@ async function sendLateEmail(env, name, now) {
     const when = now.toLocaleString("en-GB", { timeZone: "Asia/Dhaka", dateStyle: "full", timeStyle: "medium" });
     const minsLate = Math.floor((secondsIntoDay(now) - CUTOFF_SECONDS) / 60);
     const time = now.toLocaleTimeString("en-US", { timeZone: "Asia/Dhaka" });
-    await fetch("https://api.resend.com/emails", {
+    const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: "Bearer " + env.RESEND_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -33,7 +33,8 @@ async function sendLateEmail(env, name, now) {
         text: name + " checked in late.\n\nTime: " + when + " (Bangladesh time)\nLate by: about " + minsLate + " minutes after 9:00 AM",
       }),
     });
-  } catch (e) { /* never block a check-in because of an email problem */ }
+    if (!r.ok) console.log("Late email failed", r.status, await r.text());
+  } catch (e) { console.log("Late email error", String((e && e.message) || e)); /* never block a check-in */ }
 }
 
 const enc = new TextEncoder();
