@@ -49,6 +49,11 @@
     <button class="full" id="add">Add to approved list</button>
     <div id="msg" role="status"></div>
 
+    <h2>Late-alert email</h2>
+    <p>Late check-ins (after 9:00 AM) are emailed to the admin address. Send a test to check the setup.</p>
+    <button class="small" id="mailTest">Send test email</button>
+    <div id="mailMsg" role="status"></div>
+
     <h2>Approved people (<span id="count">0</span>)</h2>
     <ul id="list"></ul>
     <button class="ghost" id="out">Close admin</button>
@@ -127,6 +132,15 @@ $("add").onclick = async () => {
     render(d.names); $("names").value = "";
     $("msg").className = "ok"; $("msg").textContent = "Names added.";
   } catch (e) { $("msg").className = "error"; $("msg").textContent = e.message; }
+  finally { b.disabled = false; }
+};
+
+$("mailTest").onclick = async () => {
+  const b = $("mailTest"); b.disabled = true; $("mailMsg").className = ""; $("mailMsg").textContent = "Sending...";
+  try {
+    const d = await api("testmail");
+    $("mailMsg").className = d.ok ? "ok" : "error"; $("mailMsg").textContent = d.message;
+  } catch (e) { $("mailMsg").className = "error"; $("mailMsg").textContent = e.message; }
   finally { b.disabled = false; }
 };
 
