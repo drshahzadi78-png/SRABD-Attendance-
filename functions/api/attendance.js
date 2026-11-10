@@ -89,7 +89,6 @@ async function handle({ request, env, waitUntil }) {
   let created = false;
 
   if (!user) {
-    if (action !== "login") return json({ error: "Sign in first." }, 401);
     const salt = toHex(crypto.getRandomValues(new Uint8Array(16)));
     const pin_hash = await hashPin(pin, salt);
     await env.DB.prepare("INSERT INTO users (name_key, name, salt, pin_hash) VALUES (?, ?, ?, ?)")
