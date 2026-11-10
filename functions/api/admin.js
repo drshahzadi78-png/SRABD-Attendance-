@@ -45,6 +45,32 @@ async function authorize(env, password) {
   return json({ error: "Wrong password." }, 401);
 }
 
+// Sends one test message and returns Resend's real answer, so setup problems are visible
+async function sendTest(env) {
+  const to = env.ALERT_EMAIL || "drshahzadi78@gmail.com";
+  if (!env.RESEND_API_KEY) {
+    return { ok: false, message: "RESEND_API_KEY is not set. Add it as a Secret in Cloudflare (Settings, Variables and secrets), then retry the deployment." };
+  }
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + env.RESEND_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: "Attendance <onboarding@resend.dev>",
+        to: [to],
+        subject: "Test email from the attendance site",
+        text: "If you can read this, late check-in alerts are working.",
+      }),
+    });
+    let d = {};
+    try { d = await r.json(); } catch {}
+    if (r.ok) return { ok: true, message: "Test email sent to " + to + ". Check the inbox and the Spam folder." };
+    return { ok: false, message: "Resend refused it (" + r.status + "): " + String(d.message || d.error || "unknown error").slice(0, 300) };
+  } catch (e) {
+    return { ok: false, message: "Could not reach Resend: " + String((e && e.message) || e).slice(0, 200) };
+  }
+}
+
 async function listNames(env) {
   const now = new Date().toISOString();
   const { results } = await env.DB.prepare(
@@ -80,6 +106,8 @@ export async function onRequestPost({ request, env }) {
     await env.DB.prepare("DELETE FROM users WHERE name_key = ?").bind(key).run();
   } else if (action === "unlock" && key) {
     await env.DB.prepare("UPDATE users SET failed = 0, locked_until = NULL WHERE name_key = ?").bind(key).run();
+  } else if (action === "testmail") {
+    return json(await sendTest(env));
   } else if (action !== "list") {
     return json({ error: "Unknown action." }, 400);
   }
